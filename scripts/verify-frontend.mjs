@@ -20,7 +20,7 @@
  * `scripts/lib/transpile.mjs` for why the TypeScript API is used rather than
  * the `tsc` CLI.
  */
-import { rmSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
@@ -666,6 +666,47 @@ check(
   [...known].filter((n) => !rendered.has(n)).join(",") || "hepsi eslesti",
 );
 check("15 hata da kapsaniyor", tx.KNOWN_CONTRACT_ERRORS.length === 15, `${tx.KNOWN_CONTRACT_ERRORS.length}`);
+
+// --- dokümantasyon bütünlüğü ---------------------------------------------
+// README'deki mimari diyagramlar hem GitHub'da (markdown) hem uygulamada
+// (`next/image` → /public) görünür. Kökte bırakılan bir görsel README'de
+// çalışır ama Next.js onu servis etmez ve panel sessizce boş kalır — o yüzden
+// dosya yolu, varlığı ve boyut eşleşmesi test ediliyor.
+section("10. MİMARİ DİYAGRAMLAR");
+const readme = readFileSync(join(ROOT, "README.md"), "utf8");
+const DIAGRAMS = [
+  ["01-client-enrolment.png", 1537, 656],
+  ["02-onchain-verification.png", 1492, 677],
+];
+for (const [file, w, h] of DIAGRAMS) {
+  const at = join(ROOT, "public", "diagrams", file);
+  check(`${file} public/diagrams altinda`, existsSync(at), at);
+  if (existsSync(at)) {
+    const buf = readFileSync(at);
+    // PNG genişlik/yükseklik IHDR'da: 8. bayttan sonraki 4+4 bayt.
+    const pngW = buf.readUInt32BE(16);
+    const pngH = buf.readUInt32BE(20);
+    check(
+      `${file} boyutlari kodla tutarli (CLS kaymasi olmaz)`,
+      pngW === w && pngH === h,
+      `png=${pngW}x${pngH} kod=${w}x${h}`,
+    );
+  }
+  check(`${file} README'de referans veriliyor`, readme.includes(`public/diagrams/${file}`));
+}
+check("README'de mimari bolumu var", readme.includes("## Mimari akış"));
+check(
+  "README uyusmazliklari acikca yaziyor (SNARK kutusu sessizce gecilmemis)",
+  readme.includes("ZK-SNARK Verifier Contract") && /karşılığı yok/i.test(readme),
+);
+check(
+  "README'de video kanali olmadigi belirtiliyor",
+  /video kanalı yok/i.test(readme),
+);
+check(
+  "kok dizinde orphan gorsel kalmadi",
+  !existsSync(join(ROOT, "web2_Diagram.png")) && !existsSync(join(ROOT, "web3_diagram.png")),
+);
 
 // Argümanli hatalar argümanini da gostermeli — "ChallengeMismatch" tekillestirme
 // bilgisi vermedigi icin kullanici ne yapacagini bilemez.

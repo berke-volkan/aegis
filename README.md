@@ -28,6 +28,67 @@ sözcüğüdür.
 
 ---
 
+## Mimari akış
+
+### Tarayıcı tarafı — enrolment ve challenge üretimi
+
+![Tarayıcı tarafı: biyometrik yakalama, MFCC embedding, biyometrik anahtar bağlama ve taze challenge üretimi](public/diagrams/01-client-enrolment.png)
+
+Bu diyagramın her kutusu kodda karşılığı var:
+
+| Diyagramdaki kutu | Nerede |
+|---|---|
+| Raw Audio/Video Input | `lib/audio/recorder.ts` — AudioWorklet, `getUserMedia({ audio })`. **Video yok.** |
+| Feature Extraction (MFCC / Embedding Vector) | `lib/audio/features.ts` |
+| ZK Circuit Input | **Karşılığı yok** — aşağıya bakın |
+| Elliptic Curve Sign-to-Contract, `C = P + t·G` | `lib/zk/biometricKey.ts` — `@noble/curves` secp256k1 |
+| Dynamic Liveness Challenge (4 haneli + zaman damgası) | `lib/zk/challenges.ts` — 8 şablonluk banka, 60 sn TTL |
+| Single-Use Auth Nonce Generation | `AegisCallZK.authNonce` — her doğrulamada artar |
+| Submits Proof payload over RPC | `lib/chain/useAegis.ts` — `verifyCallWithLiveness` |
+
+### Zincir tarafı — kriptografik doğrulama ve bağlama
+
+![Zincir tarafı: 20 baytlık bağlama doğrulaması, nullifier kontrolü, lockout ve sub-second finality](public/diagrams/02-onchain-verification.png)
+
+| Diyagramdaki kutu | Nerede |
+|---|---|
+| `verifyCallWithLiveness(address,bytes32,uint8)` | `contracts/src/AegisCallZK.sol` — imza birebir |
+| 20-Byte Cryptographic Binding validation | `_expectedBinding()` — `bytes20(keccak256(DOMAIN, C, user, challengeId, authNonce))` |
+| **ZK-SNARK Verifier Contract** | **Karşılığı yok** — aşağıya bakın |
+| Nullifier Check | `authNonce` artışı + oturum sıfırlama; aynı kanıt ikinci kez kabul edilmez |
+| Lockout Guard (3 başarısız deneme) | `MAX_FAILED_ATTEMPTS` |
+| Sub-Second Finality | Monad paralel yürütme; `LivenessVerified` / `LivenessRejected` event'i |
+
+### Diyagram ile uygulamanın uyuşmadığı iki kutu
+
+Şu iki kutu diyagramda var, kodda yok. Sessizce geçmiyorum:
+
+**1. "ZK Circuit" / "ZK-SNARK Verifier Contract"**
+
+Bu projede bir devre (circuit) ve bir SNARK doğrulayıcı kontrat **yok**. Yerine gerçek
+bir kriptografik ilke uygulanıyor: sign-to-contract ile türetilen secp256k1 anahtarı.
+Fark şurada:
+
+| | Diyagramın ima ettiği | Bu projede olan |
+|---|---|---|
+| Kanıtın doğrulayıcıya ulaşan kısmı | akustik alt skorlar | 32 baytlık kanıt sözcüğü |
+| Gizlilik | devre kanıtlar, template hiç açılmaz | template **zaten hiç gönderilmiyor**; gizlilik kriptografik değil, yapısal |
+| Commitment | commitment hash | x-only public key (C = P + t·G) |
+| Zincirin güvendiği şey | SNARK kanıtı | yeniden hesaplanan 20 baytlık binding + eşik karşılaştırması |
+
+Yani gizlilik iddiası **geçerli** — template cihazda kalıyor, dışarı yalnızca commitment ve
+skorlar çıkıyor — ama bunu bir devre kanıtlamıyor; şifreleme katmanının kendisi sağlıyor.
+Ayrıntı: §7.1.
+
+**2. "Raw Audio/Video Input"**
+
+Video kanalı yok. `getUserMedia` yalnızca ses ister ve `video: false` verilir.
+
+Diyagramın geri kalanı — challenge tazelik mekanizması, authNonce, 20 baytlık binding,
+lockout ve `C = P + t·G` bağlama ilkesi — kodla birebir örtüşüyor.
+
+---
+
 ## 1. Hızlı başlangıç
 
 ```bash

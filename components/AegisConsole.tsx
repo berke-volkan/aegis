@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAccount } from "wagmi";
 import type { Address } from "viem";
@@ -1091,9 +1092,70 @@ export function AegisConsole() {
               ))}
             </ol>
           </Panel>
+
+          <ArchitectureDiagrams />
         </aside>
       </div>
     </div>
+  );
+}
+
+/**
+ * Mimari diyagramlar.
+ *
+ * Kapalı başlar: 360 px'lik bir yan sütunda açık duran iki geniş şema, konsolün
+ * asıl işini (3 adımlı akış) eziyor. `details`/`summary` ile açılıyor, yani
+ * demosu sırasında "mimariyi göster" dendiğinde bir tıkla hazır.
+ *
+ * Görseller beyaz zeminli oldukları için ters çevrilmiyor — kullanıcının
+ * çizdiği hâliyle, `next/image` ile optimize edilerek sunuluyor.
+ */
+function ArchitectureDiagrams() {
+  return (
+    <Panel className="p-5">
+      <SectionTitle title="Mimari diyagramlar" />
+      <div className="mt-3 space-y-2">
+        {(
+          [
+            [
+              "/diagrams/01-client-enrolment.png",
+              "Tarayıcı tarafı — biyometrik yakalama, MFCC embedding, sign-to-contract anahtar bağlama ve taze challenge üretimi.",
+              1537,
+              656,
+            ],
+            [
+              "/diagrams/02-onchain-verification.png",
+              "Zincir tarafı — 20 baytlık bağlama doğrulaması, nullifier kontrolü, lockout guard ve sub-second finality.",
+              1492,
+              677,
+            ],
+          ] as const
+        ).map(([src, alt, w, h]) => (
+          <details key={src} className="group rounded-lg border border-edge bg-void/40">
+            <summary className="cursor-pointer list-none px-3 py-2 text-[11px] font-medium text-ink-dim transition-colors hover:text-ink">
+              <span className="mr-1.5 inline-block transition-transform group-open:rotate-90">▸</span>
+              {src.includes("01-") ? "1 · İstemci / enrolment" : "2 · Zincir doğrulama"}
+            </summary>
+            <div className="border-t border-edge p-2">
+              <Image
+                src={src}
+                alt={alt}
+                width={w}
+                height={h}
+                className="w-full rounded-md"
+                // 2.34:1 and 2.2:1 — the intrinsic ratio is preserved automatically,
+                // so no CLS shift; these are just hints for the browser.
+                sizes="(max-width: 1024px) 100vw, 336px"
+              />
+            </div>
+          </details>
+        ))}
+      </div>
+      <p className="mt-3 text-[10px] leading-relaxed text-ink-faint">
+        Tam açıklama ve <strong>diyagram ile kodun uyuşmadığı iki kutu</strong> için{" "}
+        <code className="font-mono text-plasma-soft">README.md</code> → “Mimari akış”.
+      </p>
+    </Panel>
   );
 }
 
