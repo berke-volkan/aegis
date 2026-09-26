@@ -234,15 +234,16 @@ export function AegisConsole() {
   /**
    * Turns a failed write into a message that names the actual cause.
    *
-   * A wallet reports a failed pre-flight simulation *from its own RPC endpoint*,
-   * and many public endpoints drop the revert payload while answering
-   * `-32000`, which surfaces as "Execution reverted for an unknown reason" —
-   * useless. So the same call is re-run as a read-only `eth_call` against an
-   * endpoint we control, with the caller's address as `from` so the simulation
-   * sees their real state, and the revert is decoded from *that* answer.
+   * Two layers. `describeTxError` first digs the revert payload back out of
+   * viem's error chain and decodes it locally — viem drops `data` while building
+   * its message and reports "unknown reason" for every one of the contract's
+   * errors, but the payload is still three levels down.
    *
-   * Verified on the live deployment: through the documented endpoint every
-   * revert carries a proper selector. The contract was never the problem.
+   * Only if that comes up empty do we spend a network round trip: the same call
+   * re-run as `eth_call` against endpoints we control, with the caller's
+   * address as `from`, so the simulation sees their real state. That also
+   * answers the distinct question of whether the contract *would* have accepted
+   * the call — if it would, the fault is on the sending side.
    */
   async function reportWriteFailure(
     err: unknown,
@@ -250,7 +251,14 @@ export function AegisConsole() {
     functionName: string,
     args: readonly unknown[],
   ) {
-    const walletMessage = describeTxError(write.error ?? err, functionName);
+    const source = write.error ?? err;
+    const walletMessage = describeTxError(source, functionName);
+    setTxError({ message: walletMessage, note: null, pending: false });
+
+    // Locally decoded a real contract error — no reason to ask the network.
+    if (!/unknown reason|unknown custom error/.test(walletMessage)) return;
+    if (/reddedildi/.test(walletMessage)) return;
+
     setTxError({ message: walletMessage, note: null, pending: true });
     try {
       const simulation = await simulateCall({

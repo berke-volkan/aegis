@@ -14,6 +14,8 @@
  * this console can be in. Naming the remaining time turns "this is broken" into
  * "come back in 43 minutes" — or, better, into "use another account".
  */
+import { decodeErrorResult, toFunctionSelector, type Abi } from "viem";
+
 import { aegisCallZkAbi } from "./contract";
 
 /** Seconds → a short human duration. */
@@ -114,6 +116,41 @@ export function errorChain(err: unknown, depth = 0): string {
   return parts.filter(Boolean).join(" | ");
 }
 
+/**
+ * Finds the revert payload buried deepest in a viem error chain.
+ *
+ * viem throws away the payload on the way up, but only on the way up. A real
+ * `estimateGas` failure looks exactly like this (reproduced against the live
+ * deployment):
+ *
+ *   EstimateGasExecutionError   "Execution reverted for an unknown reason."
+ *   └─ ExecutionRevertedError   data: undefined        ← dropped here
+ *      └─ RpcRequestError       data: 0x45ed80e9…      ← present and intact
+ *         └─ (raw node error)  message: "execution reverted", code: 3
+ *
+ * `ExecutionRevertedError` sets `data` to `undefined` and builds its message
+ * from the node's *message string* alone. A custom error lives in `data`, not in
+ * that string, so the name is never recovered and viem reports "unknown
+ * reason" for all fifteen of the contract's errors.
+ *
+ * The node did nothing wrong — it answered `code: 3` with a perfectly decodable
+ * payload. So the payload is dug back out of the chain and decoded here.
+ */
+export function deepestRevertData(err: unknown): string | undefined {
+  let best: string | undefined;
+  const walk = (e: unknown, depth: number): void => {
+    if (!e || depth > 8) return;
+    const o = e as { data?: unknown; cause?: unknown };
+    // a revert payload is 4 selector bytes plus at least one 32-byte word
+    if (typeof o.data === "string" && /^0x[0-9a-f]{8,}$/i.test(o.data) && o.data.length >= 10) {
+      best = o.data;
+    }
+    if (o.cause) walk(o.cause, depth + 1);
+  };
+  walk(err, 0);
+  return best;
+}
+
 /** Extracts the args from a decoded `Name(arg1, arg2)` tail. */
 function argsFrom(tail: string): string[] {
   if (!tail.startsWith("(")) return [];
@@ -126,13 +163,47 @@ function argsFrom(tail: string): string[] {
     .filter(Boolean);
 }
 
+/** Resolves a raw revert payload to one of the contract's error names. */
+export function errorNameOf(data: string): string | undefined {
+  try {
+    return decodeErrorResult({ abi: aegisCallZkAbi, data: data as `0x${string}` }).errorName;
+  } catch {
+    const selector = data.slice(0, 10).toLowerCase();
+    for (const item of aegisCallZkAbi) {
+      if (item.type !== "error") continue;
+      try {
+        const sig = `${item.name}(${item.inputs.map((i) => i.type).join(",")})`;
+        if (toFunctionSelector(sig).toLowerCase() === selector) return item.name;
+      } catch {
+        // an entry viem cannot hash
+      }
+    }
+    return undefined;
+  }
+}
+
 export function describeTxError(err: unknown, fn: string): string {
   const haystack = errorChain(err);
-  for (const [name, render] of Object.entries(TX_ERRORS)) {
-    const at = haystack.indexOf(name);
-    if (at < 0) continue;
-    return `${fn} reddedildi: ${render(argsFrom(haystack.slice(at + name.length)))}`;
+
+  // 1. viem bazen hatayi metne yazar; en hizli yol.
+  for (const name of Object.keys(TX_ERRORS)) {
+    if (haystack.includes(name)) {
+      return `${fn} reddedildi: ${TX_ERRORS[name](argsFrom(haystack.slice(haystack.indexOf(name) + name.length)))}`;
+    }
   }
+
+  // 2. Asil durum: veri zincirin icinde, isim degil. Cikarip coz.
+  const data = deepestRevertData(err);
+  if (data) {
+    const name = errorNameOf(data);
+    if (name) return `${fn} reddedildi: ${renderContractError(name, data)}`;
+    return (
+      `${fn} reddedildi: kontrat 0x${data.slice(2, 10)} selector'ı ile döndü, ` +
+      `bu ABI'de tanımlı değil.`
+    );
+  }
+
+  // 3. Gercekten hiç veri yok — cüzdanın/RPC'nin kendi cümlesi.
   const first = haystack.split(" | ").find(Boolean) ?? "bilinmeyen hata";
   return `${fn} gönderilemedi: ${first}`;
 }
@@ -141,15 +212,41 @@ export function describeTxError(err: unknown, fn: string): string {
  * Renders a revert we already know the name of.
  *
  * Used by the diagnostic path, which learns the error name from *our* node's
- * `eth_call` rather than from the wallet's error object. The arguments are
- * pulled back out of the raw payload so `CooldownActive(1812)` still says how
- * long is left.
+ * `eth_call` rather than from the wallet's error object.
+ *
+ * The arguments are decoded from the raw payload with the ABI — they are *not*
+ * scraped out of it. A revert payload is a 4-byte selector followed by ABI-
+ * encoded arguments; the error's name never appears in it, so looking for the
+ * name in the hex silently yields "no arguments" and every duration-bearing
+ * error renders as its argument-less fallback.
  */
-export function renderContractError(name: string, data?: string): string {
+export function renderContractError(name: string, data?: string, abi?: Abi): string {
   const render = TX_ERRORS[name];
   if (!render) return `Kontrat ${name} hatası verdi.`;
-  const at = data ? data.indexOf(name) : -1;
-  const args = at >= 0 && data ? argsFrom(data.slice(at + name.length)) : [];
+
+  let args: string[] = [];
+  if (data && data.length >= 10) {
+    const target = abi ?? aegisCallZkAbi;
+    try {
+      const decoded = decodeErrorResult({ abi: target, data: data as `0x${string}` });
+      if (decoded.errorName === name) {
+        args = Object.values((decoded.args ?? {}) as Record<string, unknown>).map((v) =>
+          typeof v === "bigint" ? v.toString() : String(v),
+        );
+      }
+    } catch {
+      // fall through to the selector-only path
+    }
+    if (args.length === 0) {
+      // selector matches but decoding failed: at least the first word is
+      // usually a duration or an id, so read it positionally.
+      const body = data.slice(10);
+      for (let i = 0; i + 64 <= body.length; i += 64) {
+        const word = body.slice(i, i + 64);
+        if (word !== "0".repeat(64)) args.push(BigInt("0x" + word).toString());
+      }
+    }
+  }
   return render(args);
 }
 

@@ -2,31 +2,42 @@
  * Write-failure diagnosis.
  *
  * ── The problem ────────────────────────────────────────────────────────────
- * When a wallet is about to send a transaction it simulates it first. If the
- * simulation reverts, the user gets an error *from the wallet's RPC endpoint* —
- * not from us, and not from a node we control. Many public endpoints answer a
- * revert with JSON-RPC `code: -32000` and **no `data` field**, discarding the
- * revert payload. viem cannot decode what is not there and reports:
+ * A wallet simulates a transaction before sending it. If the simulation
+ * reverts, the user gets an error derived from the RPC's *message string*, not
+ * from the revert payload — and a custom error lives in the payload, not in the
+ * message. So all fifteen of this contract's errors reach the user as the same
+ * useless sentence:
  *
  *   "Execution reverted for an unknown reason."
  *
- * which is a dead end: the contract has fifteen custom errors, each with an
- * actionable meaning, and none of them reach the screen.
+ * Reproduced against the live deployment:
  *
- * Verified against the live deployment: called through the documented
- * `https://testnet-rpc.monad.xyz` endpoint, every revert path returns a
- * properly encoded selector (`AlreadyRegistered` → `0x45ed80e9`,
- * `CooldownActive` → `0xc1ab61a1` + remaining seconds, …) and a never-enrolled
- * address registers successfully. The contract is fine; the wallet's endpoint
- * is not telling us why.
+ *   EstimateGasExecutionError   "Execution reverted for an unknown reason."
+ *   └─ ExecutionRevertedError   data: undefined      ← viem drops it here
+ *      └─ RpcRequestError       data: 0x45ed80e9…    ← present and intact
+ *         └─ (raw node error)  message: "execution reverted", code: 3
+ *
+ * `ExecutionRevertedError` (node_modules/viem/_esm/errors/node.js) constructs
+ * its message purely from the node's message and sets `data` to `undefined`.
+ * The node answered correctly; the payload is simply lost on the way up.
  *
  * ── The fix ────────────────────────────────────────────────────────────────
- * Re-run the exact same call as a read-only `eth_call` against an endpoint we
- * control, and decode the revert from *that* answer. The caller's address is
- * used as `from`, so the simulation sees their real state — the same thing the
- * wallet did, minus the lossy hop. The pure parts (`decodeRevertData`,
- * `classifyWriteFailure`) are separated from the network call so they can be
- * tested.
+ * Two layers, cheapest first.
+ *
+ *  1. `txErrors.ts` digs the payload back out of the error chain and decodes it
+ *     locally — no network, no waiting, and it works for the common case.
+ *  2. This module re-runs the call as a read-only `eth_call` against endpoints
+ *     we control, with the caller's address as `from` so the simulation sees
+ *     their real state. That covers what (1) cannot reach: a wallet that throws
+ *     an error carrying no payload at all, and the distinct question of whether
+ *     the contract *would* have accepted the call.
+ *
+ * Verified on the live contract through the documented endpoint: every revert
+ * path returns a proper selector and a never-enrolled address registers
+ * successfully.
+ *
+ * The pure parts (`selectorName`, `decodeRevertData`, `classifyWriteFailure`)
+ * are separated from the network call so they can be tested.
  */
 import { decodeErrorResult, encodeFunctionData, toFunctionSelector, type Abi, type AbiFunction, type Address } from "viem";
 

@@ -751,15 +751,23 @@ check(
 check("veri yoksa isim de yok", diag.decodeRevertData(undefined, abi) === undefined);
 check("bos veri isim vermiyor", diag.decodeRevertData("0x", abi) === undefined);
 
-// Cooldown argumani boş veriden degil, ham selector'dan okunmali.
+// Cooldown argumani hex selector'in ARDINDAN gelir; ham veride hata adi YOKTUR.
 check(
-  "CooldownActive(1812) icinden kalan sure cikariliyor",
-  tx.renderContractError("CooldownActive", LIVE.cooldownActive).includes("30 dakika"),
-  tx.renderContractError("CooldownActive", LIVE.cooldownActive),
+  "CooldownActive(1812) icinden kalan sure cikariliyor (regresyon)",
+  tx.renderContractError("CooldownActive", LIVE.cooldownActive, abi).includes("30 dakika"),
+  tx.renderContractError("CooldownActive", LIVE.cooldownActive, abi),
 );
 check(
   "AlreadyRegistered ham veriden anlamli cumleye donusuyor",
-  tx.renderContractError("AlreadyRegistered", LIVE.alreadyRegistered).includes("zaten kayıtlı"),
+  tx.renderContractError("AlreadyRegistered", LIVE.alreadyRegistered, abi).includes("zaten kayıtlı"),
+);
+check(
+  "NotRegistered de cozuluyor",
+  tx.renderContractError("NotRegistered", LIVE.notRegistered, abi).includes("kayıtlı değil"),
+);
+check(
+  "argümansız hata veri olmadan da duzgun metin veriyor",
+  tx.renderContractError("ZeroAddress").includes("sıfır"),
 );
 
 // Bilinmeyen selector: uydurma isim URETILMEMELI.
@@ -776,7 +784,7 @@ check(
 check("selector girdisi ABI disiysa undefined", diag.selectorName("0xdeadbeef", abi) === undefined);
 
 // --- siniflandirma: wallet hatasi, kendi simülasyonumuz, ikisi birlikte -----
-const render = (name) => tx.renderContractError(name);
+const render = (name, data) => tx.renderContractError(name, data, abi);
 const walletSaysUnknown = "registerBaseline gönderilemedi: Execution reverted for an unknown reason.";
 
 const decodedVerdict = diag.classifyWriteFailure({
@@ -787,13 +795,13 @@ const decodedVerdict = diag.classifyWriteFailure({
 });
 check(
   "wallet 'unknown reason' dediginde bizim cozumumuz kazanir",
-  decodedVerdict.message.includes("Bekleme süresi") && decodedVerdict.authoritative,
-  decodedVerdict.message,
+  decodedVerdict.walletMessage.includes("Bekleme süresi") && decodedVerdict.authoritative,
+  decodedVerdict.walletMessage,
 );
 check(
   "cooldown mesaji kalan sureyi iceriyor",
-  decodedVerdict.message.includes("30 dakika"),
-  decodedVerdict.message,
+  decodedVerdict.walletMessage.includes("30 dakika"),
+  decodedVerdict.walletMessage,
 );
 
 const walletSide = diag.classifyWriteFailure({
@@ -804,8 +812,8 @@ const walletSide = diag.classifyWriteFailure({
 });
 check(
   "simulasyon BASARILIYSA sorun kontratta degil, gonderim tarafinda",
-  walletSide.message.includes("kontratta değil") && walletSide.authoritative,
-  walletSide.message,
+  walletSide.walletMessage.includes("kontratta değil") && walletSide.authoritative,
+  walletSide.walletMessage,
 );
 
 const lossyNode = diag.classifyWriteFailure({
@@ -816,8 +824,8 @@ const lossyNode = diag.classifyWriteFailure({
 });
 check(
   "dugum veri tasimiyorsa bu acikca soyleniyor (RPC onerisi veriliyor)",
-  lossyNode.message.includes("-32000") && lossyNode.message.includes("RPC"),
-  lossyNode.message,
+  lossyNode.walletMessage.includes("-32000") && lossyNode.walletMessage.includes("RPC"),
+  lossyNode.walletMessage,
 );
 
 const unreachable = diag.classifyWriteFailure({
@@ -828,12 +836,92 @@ const unreachable = diag.classifyWriteFailure({
 });
 check(
   "hicbir uca ulasilamazsa cuzdanin mesaji korunur",
-  unreachable.message.includes("bağlantı") && !unreachable.authoritative,
-  unreachable.message,
+  unreachable.walletMessage.includes("bağlantı") && !unreachable.authoritative,
+  unreachable.walletMessage,
 );
 
-check("simulasyon yokken bile mesaj uretiliyor", typeof decoded.message === "string" && decoded.message.length > 0);
+check("simulasyon yokken bile mesaj uretiliyor", typeof decodedVerdict.walletMessage === "string" && decodedVerdict.walletMessage.length > 0);
+
+// --- ASIL REGRESYON: canli hata nesnesinin TAM sekli ----------------------
+// `estimateGas` hatası canlı zincirden bu şekilde geliyor. viem `data`'yı
+// ExecutionRevertedError'da undefined yapıp mesajı node'un metninden kuruyor,
+// sonuç "for an unknown reason" — oysa veri iki seviye aşağıda sağlam duruyor.
+// Düzeltme: veri zincirden çıkarılıp lokalde çözülüyor (ağ turu gerekmez).
+section("9. CANLI HATA NESNESİ — veri 3 seviye aşağıda");
+
+/** The real chain, reproduced verbatim via viem's estimateGas. */
+function viemRevertError(data) {
+  return {
+    name: "EstimateGasExecutionError",
+    message: "Execution reverted for an unknown reason.",
+    shortMessage: "Execution reverted for an unknown reason.",
+    cause: {
+      name: "ExecutionRevertedError",
+      message: "Execution reverted for an unknown reason.",
+      shortMessage: "Execution reverted for an unknown reason.",
+      data: undefined,
+      cause: {
+        name: "RpcRequestError",
+        message: "RPC Request failed.",
+        shortMessage: "RPC Request failed.",
+        data,
+        cause: {
+          message: "execution reverted",
+          data,
+          code: 3,
+        },
+      },
+    },
+  };
+}
+
+check(
+  "revert verisi zincirin derinliginde bulunuyor",
+  tx.deepestRevertData(viemRevertError(LIVE.alreadyRegistered)) === LIVE.alreadyRegistered,
+  String(tx.deepestRevertData(viemRevertError(LIVE.alreadyRegistered))),
+);
+check("veri yoksa bulunmuyor (uydurma veri uretilmiyor)", tx.deepestRevertData({ message: "x" }) === undefined);
+
+const liveAlready = tx.describeTxError(viemRevertError(LIVE.alreadyRegistered), "registerBaseline");
+check(
+  "canli hatadan anlamli mesaj cikiyor (regresyon)",
+  liveAlready.includes("zaten kayıtlı") && !liveAlready.includes("unknown reason"),
+  liveAlready,
+);
+
+const liveCooldown = tx.describeTxError(viemRevertError(LIVE.cooldownActive), "resetBaseline");
+check(
+  "canli cooldown hatasindan kalan sure cikiyor",
+  liveCooldown.includes("Bekleme süresi") && liveCooldown.includes("30 dakika"),
+  liveCooldown,
+);
+
+const liveNotReg = tx.describeTxError(viemRevertError(LIVE.notRegistered), "resetBaseline");
+check("canli NotRegistered hatasi cozuluyor", liveNotReg.includes("kayıtlı değil"), liveNotReg);
+
+const liveZero = tx.describeTxError(viemRevertError(LIVE.zeroAddress), "registerBaseline");
+check("canli ZeroAddress hatasi cozuluyor", liveZero.includes("sıfır"), liveZero);
+
+const liveUnknownSel = tx.describeTxError(viemRevertError("0xdeadbeef" + "00".repeat(32)), "verifyCall");
+check(
+  "ABI disi selector uydurma isim degil, selector'in kendisi soyleniyor",
+  liveUnknownSel.includes("0xdeadbeef") && !/reddedildi: Kontrat \w+/.test(liveUnknownSel),
+  liveUnknownSel,
+);
+
+// Gerçekten veri taşımayan hata: dürüst kalıyor, uydurma çözüm üretmiyor.
+const noData = tx.describeTxError(
+  { shortMessage: "User rejected the request", message: "User rejected the request" },
+  "registerBaseline",
+);
+check(
+  "veri yokken uydurma sebep yok (kullanici reddi oldugu gibi gorunuyor)",
+  noData.includes("User rejected") && !noData.includes("reddedildi"),
+  noData,
+);
 
 // ---------------------------------------------------------------------------
 console.log(
-  `\n${failed === 0 ? "[32m" : "[31m"}${passed} passed, ${failed} failed[0m\
+  `\n${failed === 0 ? "[32m" : "[31m"}${passed} passed, ${failed} failed[0m\n`,
+);
+process.exit(failed === 0 ? 0 : 1);
