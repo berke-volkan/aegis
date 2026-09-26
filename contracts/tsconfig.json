@@ -1,0 +1,19 @@
+{
+  "//": [
+    "Hardhat 2's ts-node integration walks UP for a tsconfig.json, so without",
+    "this file it would pick up the Next.js tsconfig.json in the repo root and",
+    "fail with TS5011. This file also stops that lookup at contracts/."
+  ],
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "lib": ["ES2022"],
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "strict": false,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": ["hardhat.config.ts", "test/**/*.ts", "test/**/*.js", "scripts/**/*.js"]
+}

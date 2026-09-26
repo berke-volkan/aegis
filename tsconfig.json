@@ -1,0 +1,31 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["dom", "dom.iterable", "ES2022"],
+    "allowJs": false,
+    "skipLibCheck": true,
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "preserve",
+    "incremental": true,
+    "types": ["node"],
+    "plugins": [{ "name": "next" }],
+    "paths": {
+      "@/*": ["./*"]
+    }
+  },
+  "include": ["next-env.d.ts", "global.d.ts", "app/**/*.ts", "app/**/*.tsx", "components/**/*.ts", "components/**/*.tsx", "lib/**/*.ts", "lib/**/*.tsx", ".next/types/**/*.ts"],
+  "//exclude": [
+    "The repo also contains a Hardhat toolchain (hardhat.config.ts, test/*.t.sol,",
+    "test/Counter.ts, ignition/*, contracts/*). Those are a different build with",
+    "their own tsconfig; including them here makes `npm run typecheck` report",
+    "errors that have nothing to do with the Next.js app.",
+    "Note `contracts/` has its own Hardhat 2 project with contracts/tsconfig.json."
+  ],
+  "exclude": ["node_modules", "contracts", "test", "ignition", "hardhat.config.ts", "scripts", ".next", "out", "dist"]
+}

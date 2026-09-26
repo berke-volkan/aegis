@@ -1,0 +1,48 @@
+{
+  "name": "aegis-call-zk",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Aegis — deepfake-resistant live call verification MVP on Monad Testnet (Next.js + Wagmi/Viem + simulated ZK biometric proofs)",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit",
+    "verify": "node scripts/verify-frontend.mjs",
+    "test:wallets": "node scripts/verify-wallets.mjs",
+    "test:capture": "node scripts/verify-capture.mjs",
+    "test:deployed": "node scripts/verify-deployment.mjs",
+    "contract:install": "npm --prefix contracts install",
+    "contract:compile": "npm --prefix contracts run compile",
+    "contract:test": "npm --prefix contracts run test",
+    "contract:deploy": "npm --prefix contracts run deploy:testnet",
+    "contract:abi": "npm run contract:compile && node contracts/scripts/export-abi.js",
+    "check": "npm run typecheck && npm run contract:test && npm run verify && npm run test:wallets && npm run test:capture"
+  },
+  "dependencies": {
+    "@noble/curves": "^1.9.0",
+    "@tanstack/react-query": "^5.62.7",
+    "next": "^15.1.3",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "wagmi": "^2.14.6"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-ignition": "^3.1.8",
+    "@nomicfoundation/hardhat-toolbox-viem": "^5.0.7",
+    "@tailwindcss/postcss": "^4.0.0",
+    "@types/node": "^22.10.2",
+    "@types/react": "^19.0.2",
+    "@types/react-dom": "^19.0.2",
+    "forge-std": "github:foundry-rs/forge-std#v1.16.2",
+    "hardhat": "^3.18.0",
+    "tailwindcss": "^4.0.0",
+    "typescript": "~6.0.3",
+    "viem": "^2.56.9"
+  },
+  "engines": {
+    "node": ">=20.9.0"
+  },
+  "type": "module"
+}
