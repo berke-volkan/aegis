@@ -13,9 +13,17 @@ import { fileURLToPath } from "node:url";
  */
 const nextConfig: NextConfig = {
   reactStrictMode: true,
-  // Pin the workspace root so Next does not walk up and pick up an unrelated
-  // lockfile above this directory.
-  outputFileTracingRoot: dirname(dirname(fileURLToPath(import.meta.url))),
+  // Pin the trace root to *this* directory so Next does not walk up and pick up
+  // an unrelated lockfile above the project.
+  //
+  // It must be the directory holding this file, not its parent. `dirname(dirname(…))`
+  // points one level ABOVE the project: on Vercel (/vercel/path0/<repo>) that is
+  // /vercel/path0, so the tracer looks for `.next/routes-manifest.json` outside
+  // the build output and the build dies with
+  //   ENOENT: … lstat '/vercel/path0/path0/.next/routes-manifest.json'
+  // which reads like a corrupt cache but is a path bug. Pinning to the project
+  // directory is also the documented way to stop upward lockfile discovery.
+  outputFileTracingRoot: dirname(fileURLToPath(import.meta.url)),
   experimental: {
     // wagmi/viem ship large ESM bundles; keep them in their own chunk
     optimizePackageImports: ["wagmi", "viem", "@wagmi/connectors"],
