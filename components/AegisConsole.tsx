@@ -29,7 +29,7 @@ import { createBaselineProof, BASELINE_PHRASES, BASELINE_TARGET_MS } from "@/lib
 import { ENROLL_MIN_LIVENESS_BPS } from "@/lib/zk/enrollmentLiveness";
 import { issueChallenge, type LivenessChallenge } from "@/lib/zk/challenges";
 import { proveLiveness, scoreLiveness, type LivenessTranscript } from "@/lib/zk/liveness";
-import { pcmDigest, type Bytes32 } from "@/lib/zk/primitives";
+import { pcmDigest, shorten, type Bytes32 } from "@/lib/zk/primitives";
 import { SPOOF_LABELS, normalise, synthesiseSpoof, type SpoofKind } from "@/lib/zk/spoof";
 import { useAvailableWallets } from "@/lib/wallets/discovery";
 import {
@@ -219,6 +219,9 @@ export function AegisConsole() {
   async function submitBaseline() {
     if (!address || !baselineResult?.ok) return;
     setError(null);
+    // Stale diagnosis from a previous attempt must not survive into the new
+    // one — otherwise a fixed problem still reads as broken.
+    setTxError(null);
     try {
       await register.writeContract({
         address: AEGIS_ADDRESS,
@@ -780,20 +783,69 @@ export function AegisConsole() {
                   <code className="block break-all rounded-lg border border-edge bg-void/60 p-2.5 font-mono text-[11px] text-aegis">
                     {baselineResult?.commitment}
                   </code>
+                  {/* Cooldown guard — mirrors the reset button below. Without it
+                      this button sends a transaction the chain can only reject
+                      with `CooldownActive`, and the wallet sits on a scary
+                      "this transaction will fail" prompt while the UI spins.
+                      Same deal as a reset: switch to a never-enrolled account
+                      to skip the wait entirely. */}
+                  {cooldownLeft > 0 && (
+                    <div className="space-y-2 rounded-lg border border-warn/40 bg-void/40 p-3">
+                      <p className="text-xs leading-relaxed text-warn">
+                        Bu adres beklemede: <strong>{formatDuration(cooldownLeft)}</strong> kaldı.
+                        Süre dolmadan gönderilen her kayıt işlemi zincirde reddedilir.
+                      </p>
+                      <p className="text-[11px] leading-relaxed text-ink-faint">
+                        Beklemek istemiyorsan cüzdanında{" "}
+                        <span className="text-ink-dim">başka bir hesaba geç</span> — hiç kayıt
+                        yapılmamış bir adres hemen yazabilir.
+                      </p>
+                    </div>
+                  )}
                   <Button
                     variant="success"
                     loading={register.isConfirming}
-                    disabled={!address}
+                    disabled={!address || cooldownLeft > 0}
                     onClick={submitBaseline}
                   >
-                    {register.isConfirming ? "Monad'a gönderiliyor…" : "registerBaseline · C'yi yaz"}
+                    {register.isConfirming
+                      ? "Monad'a gönderiliyor…"
+                      : cooldownLeft > 0
+                        ? `registerBaseline · ${formatDuration(cooldownLeft)} sonra`
+                        : "registerBaseline · C'yi yaz"}
                   </Button>
                   {register.isConfirming && (
                     <p className="text-[11px] text-ink-faint">
-                      İşlem gönderildi. Monad Testnet onayı bekleniyor — onaylanınca 2. adım
-                      otomatik açılır. Not: kayıt tamamlandığında bir saatlik yeniden kayıt
-                      bekleme süresi başlar.
+                      {register.hash ? (
+                        <>
+                          İşlem gönderildi, Monad Testnet onayı bekleniyor —{" "}
+                          <a
+                            href={explorerTx(register.hash)}
+                            target="_blank"
+                            rel="noreferrer noopener"
+                            className="font-mono text-plasma-soft underline underline-offset-2"
+                          >
+                            {shorten(register.hash, 8, 6)} ↗
+                          </a>
+                          . Onaylanınca 2. adım otomatik açılır.
+                        </>
+                      ) : (
+                        <>
+                          Cüzdan onayı bekleniyor — cüzdan penceresinde işlemi onaylayın.
+                          Pencere açılmadıysa cüzdanınızın kilitli olmadığını kontrol edin.
+                        </>
+                      )}{" "}
+                      Not: kayıt tamamlandığında bir saatlik yeniden kayıt bekleme süresi
+                      başlar.
                     </p>
+                  )}
+                  {register.isConfirming && (
+                    <button
+                      onClick={() => register.reset()}
+                      className="text-[11px] text-ink-faint underline decoration-dotted underline-offset-4 hover:text-ink"
+                    >
+                      Takıldıysa sıfırla ve tekrar dene
+                    </button>
                   )}
                   {register.error && !txError && (
                     <p className="text-[11px] text-ink-faint">
